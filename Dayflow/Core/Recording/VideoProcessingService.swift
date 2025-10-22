@@ -336,10 +336,11 @@ actor VideoProcessingService {
             preferHEVC: preferHEVCOnThisMac
         )
 
-        let writerInputResult: (input: AVAssetWriterInput, codec: AVVideoCodecType?)
+        var finalOutputSettings = outputSettings
+        let writerInput: AVAssetWriterInput
         do {
-            writerInputResult = try createVideoWriterInput(
-                outputSettings: outputSettings,
+            writerInput = try createVideoWriterInput(
+                outputSettings: &finalOutputSettings,
                 requireH264: !preferHEVCOnThisMac
             )
         } catch let error as VideoProcessingError {
@@ -350,11 +351,9 @@ actor VideoProcessingService {
             throw VideoProcessingError.assetWriterInputCreationFailed(error)
         }
 
-        if let codec = writerInputResult.codec {
+        if let codec = resolvedVideoCodec(from: finalOutputSettings) {
             print("🎬 Timelapse codec: \(codec.rawValue)")
         }
-
-        let writerInput = writerInputResult.input
 
         writerInput.expectsMediaDataInRealTime = false
         writerInput.transform = preferredTransform
@@ -453,27 +452,24 @@ actor VideoProcessingService {
         return (targetWidth, targetHeight)
     }
 
-    private func createVideoWriterInput(outputSettings: [String: Any], requireH264: Bool) throws -> (AVAssetWriterInput, AVVideoCodecType?) {
-        var settingsToUse = outputSettings
-
+    private func createVideoWriterInput(outputSettings: inout [String: Any], requireH264: Bool) throws -> AVAssetWriterInput {
         if requireH264 {
-            if let codec = resolvedVideoCodec(from: settingsToUse) {
+            if let codec = resolvedVideoCodec(from: outputSettings) {
                 if codec != .h264 {
                     print("Timelapse codec \(codec.rawValue) not supported on Intel. Falling back to H.264.")
-                    settingsToUse[AVVideoCodecKey] = AVVideoCodecType.h264
+                    outputSettings[AVVideoCodecKey] = AVVideoCodecType.h264
                 }
             } else {
-                settingsToUse[AVVideoCodecKey] = AVVideoCodecType.h264
+                outputSettings[AVVideoCodecKey] = AVVideoCodecType.h264
             }
         }
 
-        guard AVAssetWriter.canApply(outputSettings: settingsToUse, forMediaType: .video) else {
+        guard AVAssetWriter.canApply(outputSettings: outputSettings, forMediaType: .video) else {
             throw VideoProcessingError.assetWriterInputCreationFailed(nil)
         }
 
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settingsToUse)
-        let codec = resolvedVideoCodec(from: settingsToUse)
-        return (input, codec)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+        return input
     }
 
     private func resolvedVideoCodec(from settings: [String: Any]) -> AVVideoCodecType? {
