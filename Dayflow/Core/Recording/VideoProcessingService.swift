@@ -465,6 +465,8 @@ actor VideoProcessingService {
             } else {
                 settingsToUse[AVVideoCodecKey] = AVVideoCodecType.h264
             }
+
+            ensureH264MainProfile(in: &settingsToUse)
         }
 
         guard AVAssetWriter.canApply(outputSettings: settingsToUse, forMediaType: .video) else {
@@ -486,6 +488,13 @@ actor VideoProcessingService {
         }
 
         return nil
+    }
+
+    private func ensureH264MainProfile(in settings: inout [String: Any]) {
+        var compressionProperties = settings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+
+        compressionProperties[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
+        settings[AVVideoCompressionPropertiesKey] = compressionProperties
     }
 
     private func makeVideoOutputSettings(width: Int,
