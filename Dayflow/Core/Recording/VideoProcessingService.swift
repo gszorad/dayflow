@@ -514,9 +514,10 @@ actor VideoProcessingService {
         ]
 
         var h264Compression = baseCompressionProperties
-        h264Compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+        let initialH264Profile = preferHEVC ? AVVideoProfileLevelH264HighAutoLevel : AVVideoProfileLevelH264MainAutoLevel
+        h264Compression[AVVideoProfileLevelKey] = initialH264Profile
 
-        let h264Settings: [String: Any] = [
+        var h264Settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: evenWidth,
             AVVideoHeightKey: evenHeight,
@@ -529,6 +530,15 @@ actor VideoProcessingService {
 
         if AVAssetWriter.canApply(outputSettings: h264Settings, forMediaType: .video) {
             return h264Settings
+        }
+
+        if initialH264Profile == AVVideoProfileLevelH264HighAutoLevel {
+            h264Compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264MainAutoLevel
+            h264Settings[AVVideoCompressionPropertiesKey] = h264Compression
+
+            if AVAssetWriter.canApply(outputSettings: h264Settings, forMediaType: .video) {
+                return h264Settings
+            }
         }
 
         return [
