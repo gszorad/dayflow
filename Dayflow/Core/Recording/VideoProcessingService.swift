@@ -519,11 +519,11 @@ actor VideoProcessingService {
             AVVideoCompressionPropertiesKey: h264Compression
         ]
 
-        if preferHEVC, AVAssetWriter.canApply(outputSettings: hevcSettings, forMediaType: .video) {
+        if preferHEVC, AVAssetWriterInput.canApply(outputSettings: hevcSettings, forMediaType: .video) {
             return hevcSettings
         }
 
-        if AVAssetWriter.canApply(outputSettings: h264Settings, forMediaType: .video) {
+        if AVAssetWriterInput.canApply(outputSettings: h264Settings, forMediaType: .video) {
             return h264Settings
         }
 
