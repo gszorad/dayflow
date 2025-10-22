@@ -85,13 +85,25 @@ class HardwareInfo {
     }
     
     var isAppleSilicon: Bool {
+        #if arch(arm64)
+        return true
+        #else
+        if #available(macOS 11.0, *) {
+            var arm64Capable: Int32 = 0
+            var size = MemoryLayout<Int32>.size
+            if sysctlbyname("hw.optional.arm64", &arm64Capable, &size, nil, 0) == 0, arm64Capable == 1 {
+                return true
+            }
+        }
+
         var sysinfo = utsname()
         uname(&sysinfo)
         let machine = withUnsafePointer(to: &sysinfo.machine) {
             $0.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
         }
         // common values: "arm64", "x86_64"
-        return machine.contains("arm64")
+        return machine.contains("arm64") || machine.contains("arm")
+        #endif
     }
     
     var cpuArchitectureLabel: String {
