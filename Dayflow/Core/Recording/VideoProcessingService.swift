@@ -12,7 +12,7 @@ enum VideoProcessingError: Error {
     case exportStatusNotCompleted(AVAssetExportSession.Status)
     case assetReaderCreationFailed(Error?)
     case assetWriterCreationFailed(Error?)
-    case assetWriterInputCreationFailed
+    case assetWriterInputCreationFailed(Error?)
     case assetWriterStartFailed(Error?)
     case frameReadFailed
     case frameAppendFailed
@@ -328,25 +328,39 @@ actor VideoProcessingService {
 
         print("🎬 Timelapse encoding: \(outputWidth)×\(outputHeight) @ \(outputFPS)fps, bitrate: \(Double(bitrate) / 1_000_000)Mbps")
         
-        let outputSettings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: outputWidth,
-            AVVideoHeightKey: outputHeight,
-            AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: bitrate,
-                AVVideoMaxKeyFrameIntervalKey: 150, // Keyframe every 10 seconds at 15fps
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264MainAutoLevel,
-                AVVideoExpectedSourceFrameRateKey: outputFPS,
-                AVVideoAverageNonDroppableFrameRateKey: outputFPS
-            ]
-        ]
-        
-        let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+        let outputSettings = makeVideoOutputSettings(
+            width: outputWidth,
+            height: outputHeight,
+            targetBitrate: bitrate,
+            frameRate: outputFPS,
+            preferHEVC: preferHEVCOnThisMac
+        )
+
+        let writerInputResult: (input: AVAssetWriterInput, codec: AVVideoCodecType?)
+        do {
+            writerInputResult = try createVideoWriterInput(
+                outputSettings: outputSettings,
+                requireH264: !preferHEVCOnThisMac
+            )
+        } catch let error as VideoProcessingError {
+            print("Error creating AVAssetWriterInput: \(error)")
+            throw error
+        } catch {
+            print("Error creating AVAssetWriterInput: \(error.localizedDescription)")
+            throw VideoProcessingError.assetWriterInputCreationFailed(error)
+        }
+
+        if let codec = writerInputResult.codec {
+            print("🎬 Timelapse codec: \(codec.rawValue)")
+        }
+
+        let writerInput = writerInputResult.input
+
         writerInput.expectsMediaDataInRealTime = false
         writerInput.transform = preferredTransform
-        
+
         guard writer.canAdd(writerInput) else {
-            throw VideoProcessingError.assetWriterInputCreationFailed
+            throw VideoProcessingError.assetWriterInputCreationFailed(nil)
         }
         writer.add(writerInput)
         
@@ -437,6 +451,95 @@ actor VideoProcessingService {
         targetHeight = makeEven(targetHeight)
 
         return (targetWidth, targetHeight)
+    }
+
+    private func createVideoWriterInput(outputSettings: [String: Any], requireH264: Bool) throws -> (AVAssetWriterInput, AVVideoCodecType?) {
+        var settingsToUse = outputSettings
+
+        if requireH264 {
+            if let codec = resolvedVideoCodec(from: settingsToUse) {
+                if codec != .h264 {
+                    print("Timelapse codec \(codec.rawValue) not supported on Intel. Falling back to H.264.")
+                    settingsToUse[AVVideoCodecKey] = AVVideoCodecType.h264
+                }
+            } else {
+                settingsToUse[AVVideoCodecKey] = AVVideoCodecType.h264
+            }
+        }
+
+        guard AVAssetWriter.canApply(outputSettings: settingsToUse, forMediaType: .video) else {
+            throw VideoProcessingError.assetWriterInputCreationFailed(nil)
+        }
+
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settingsToUse)
+        let codec = resolvedVideoCodec(from: settingsToUse)
+        return (input, codec)
+    }
+
+    private func resolvedVideoCodec(from settings: [String: Any]) -> AVVideoCodecType? {
+        if let codecType = settings[AVVideoCodecKey] as? AVVideoCodecType {
+            return codecType
+        }
+
+        if let codecString = settings[AVVideoCodecKey] as? String {
+            return AVVideoCodecType(rawValue: codecString)
+        }
+
+        return nil
+    }
+
+    private func makeVideoOutputSettings(width: Int,
+                                         height: Int,
+                                         targetBitrate: Int,
+                                         frameRate: Int,
+                                         preferHEVC: Bool) -> [String: Any] {
+        let evenWidth = max((width & ~1), 2)
+        let evenHeight = max((height & ~1), 2)
+
+        let baseCompressionProperties: [String: Any] = [
+            AVVideoAverageBitRateKey: targetBitrate,
+            AVVideoMaxKeyFrameIntervalKey: 150, // Keyframe every 10 seconds at 15fps
+            AVVideoExpectedSourceFrameRateKey: frameRate,
+            AVVideoAverageNonDroppableFrameRateKey: frameRate
+        ]
+
+        var hevcCompression = baseCompressionProperties
+        hevcCompression[AVVideoProfileLevelKey] = AVVideoProfileLevelHEVCHighAutoLevel
+
+        let hevcSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.hevc,
+            AVVideoWidthKey: evenWidth,
+            AVVideoHeightKey: evenHeight,
+            AVVideoCompressionPropertiesKey: hevcCompression
+        ]
+
+        var h264Compression = baseCompressionProperties
+        h264Compression[AVVideoProfileLevelKey] = AVVideoProfileLevelH264HighAutoLevel
+
+        let h264Settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: evenWidth,
+            AVVideoHeightKey: evenHeight,
+            AVVideoCompressionPropertiesKey: h264Compression
+        ]
+
+        if preferHEVC, AVAssetWriter.canApply(outputSettings: hevcSettings, forMediaType: .video) {
+            return hevcSettings
+        }
+
+        if AVAssetWriter.canApply(outputSettings: h264Settings, forMediaType: .video) {
+            return h264Settings
+        }
+
+        return [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: evenWidth,
+            AVVideoHeightKey: evenHeight
+        ]
+    }
+
+    private var preferHEVCOnThisMac: Bool {
+        HardwareInfo.shared.isAppleSilicon
     }
 
     private func targetCanvasDimensions(for infos: Set<TrackInfo>) -> (width: Int, height: Int) {
