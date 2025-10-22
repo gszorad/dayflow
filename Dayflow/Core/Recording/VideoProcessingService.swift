@@ -464,7 +464,7 @@ actor VideoProcessingService {
             }
         }
 
-        guard AVAssetWriterInput.canApply(outputSettings: outputSettings, forMediaType: .video) else {
+        guard AVAssetWriter.canApply(outputSettings: outputSettings, forMediaType: .video) else {
             throw VideoProcessingError.assetWriterInputCreationFailed(nil)
         }
 
